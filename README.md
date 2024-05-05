@@ -5,7 +5,9 @@
 ## BitTorrent Client
 
 - Description
+
 	BitTorrent is a peer-to-peer file sharing protocol used for distributing large amounts of data. Here, I build a BitTorrent client that's capable of downloading a publicly available file using the BitTorrent protocol. BitTorrent helps file downloads to be a lot faster and reduces server load. More information about this project will be in the READMe file of the BitTorrent directory.
 - Model Inspiration and Real life use
-    Tranmission is an open source BitTorrent Client that is used by Ubuntu (as of May 2024)
+
+    Tranmission is a BitTorrent Client that is used
 - Status: In Progress
