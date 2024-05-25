@@ -1,5 +1,6 @@
-#include "../include/bencode.h"
-#include "../include/util.h"
+#include "bencode.h"
+#include "util.h"
+#include <openssl/sha.h>
 
 /* Here we parse strings according to the bittorrent specification.
  * Strings are length-prefixed base ten followed by a colon and the string. 
@@ -23,7 +24,7 @@ char *parse_str(const char* bencoded_value)
             // Find position of word. malloc, string copy and then return
             const char* word = colon + 1;
             char* decoded_word = malloc(str_len + 1);
-            strncpy(decoded_word, word, str_len);
+            memcpy(decoded_word, word, str_len);
             decoded_word[str_len] = '\0';
             return decoded_word;
         }
@@ -138,7 +139,7 @@ ListArr* parse_as_list(const char* bencoded_value){
     }
 
     // initialize all prt of the rray of list
-    for (int i = 0; i < list->size; i++) {
+    for (size_t i = 0; i < list->size; i++) {
         list->items[i] = malloc(sizeof(ListArr));
         list->items[i]->data.str = NULL; // Initialize
         list->items[i]->data.num = 0;
@@ -278,7 +279,7 @@ DictArr* parse_as_dict(const char* bencoded_value){
     }
 
     // initialize all prt of the dictionary
-    for (int i = 0; i < dict->size; i++) {
+    for (size_t  i = 0; i < dict->size; i++) {
         dict->items[i] = malloc(sizeof(DictArr));
         dict->items[i]->value.str = NULL; // Initialize
         dict->items[i]->value.num = 0;
@@ -398,12 +399,32 @@ Tracker* make_tracker(const char* buffer){
     }
 
     // announce field and info is mandatory
-    // if(track->announce == NULL || track->info == NULL){
-    //     fprintf(stderr, "Error: Announce AND/OR info not found in tracker\n");
-    //     exit(1);
-    // }
+    if(track->announce == NULL || track->info == NULL){
+        fprintf(stderr, "Error: Announce AND/OR info not found in tracker\n");
+        exit(1);
+    }
 
     return track;
+}
+
+/* This function takes the dictionary info and then creates a bencoding for it
+*  After doing so, it will then take the SHA1 hash of all fields concatenated
+* together
+*/
+unsigned char* generate_info_hash(DictArr* info) {
+    size_t length = 0;
+    char *bencoded_info = bencode(info, &length); 
+
+    unsigned char *hash = malloc(SHA_DIGEST_LENGTH);
+    if (!hash) {
+        fprintf(stderr, "Memory allocation failed for hash\n");
+        exit(1);
+    }
+
+    // subtracting one because null terminating character should not be hashed
+    SHA1((unsigned char*)bencoded_info, length - 1, hash);
+    free(bencoded_info);
+    return hash;
 }
 
 /* This is called in main and represents everything that bencode requires to work
@@ -460,6 +481,9 @@ int main(int argc, char* argv[]) {
         const char *encoded_str = read_torrent_file(torrent_file);
         Tracker *track = make_tracker(encoded_str);
         printTracker(track);
+        unsigned char* buf = generate_info_hash(track->info);
+        printf("Info Hash: ");
+        print_sha1_hex(buf);
     }
 
     else {
@@ -469,3 +493,14 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
+//TODO: Error in the way we read sha1 hash value. When tested, it doest read the entire hash, this could be due to a null byte present in the raw binary. This causes us to read less of the entire hash. i.e debian1.torrent, we read 81 instead of 50240. Given that we are representing in a char*str , it is possible, a null byte is being encountered in the binary stream causing it to terminate. Uncommment the writing to a file and run with debian1.torrent
+
+/* 2 solutions to this:
+    - we change the way we read integers in front of a string from atoi, to atol.
+    Bigger representation of int might solve this case
+    - we add a new field to the struct of dict, unsigned char* to take the sha1-hash specifically. So when a null byte is encountered, we wont suffer
+    we refatcor parse_str to use default to strncpy for general use, but memcpy when we have to parse hash value in pieces. We can simply use a flag for this..bool flag
+
+
+*/

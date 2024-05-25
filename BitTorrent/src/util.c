@@ -14,7 +14,7 @@ char* read_torrent_file(const char* filename) {
 
     // Seek to the end of the file to determine its size
     fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
+    size_t file_size = ftell(file);
     fseek(file, 0, SEEK_SET); // Seek back to the start of the file
 
     // Allocate memory for the entire content
@@ -206,4 +206,187 @@ void printData(void* val, Type type) {
             fprintf(stderr, "Error in printData(): unknown data type\n");
     }
     printf("\n");  
+}
+
+// prints out hash in hex
+void print_sha1_hex(unsigned char* hash) {
+    for (int i = 0; i < 20; i++) {
+        printf("%02x", hash[i]);
+    }
+    printf("\n");
+}
+
+
+/* This function iterates through info dictionary to find the 
+* length of sha1 hash value in the info dictionary.
+* This is the hash value of pieces. The formula is : 
+* (length / pieces length) * 20
+*/
+int64_t _hashlen(DictArr* info){
+    double len = -1;
+
+    for (size_t i = 0; i < info->size; i++){
+        if(strcmp(info->items[i]->key, "length") == 0)
+            len = info->items[i]->value.num;
+        else if (strcmp(info->items[i]->key, "piece length") == 0 && len > 0){
+            len = ceil(len / info->items[i]->value.num);
+        }
+    }
+
+    return len * 20;
+}
+
+
+/* Simply creates a bencoding of a dictionary passed in. That being said, this * function only consider cases where integers and strings are present. 
+* Bencoding logic for nested dictionary or list has not been done yet 
+* TODO:
+*/
+char* bencode(DictArr* info, size_t* temp_len) {
+    char *result = NULL;
+    int total_length = 3; // space for 'd' (will add 'e' '\0' later)
+
+    result = malloc(3);
+    if (!result) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+
+    // encoding of dictionary starts with d and ends with e
+    result[0] = 'd'; 
+    result[1] = 'e';
+    result[2] = '\0';
+
+    for (size_t i = 0; i < info->size; i++) {
+        char* key = info->items[i]->key;
+        long int key_len = strlen(key);
+
+        // bencode the key
+        int buf_size = snprintf(NULL, 0, "%ld:%s", key_len, key) + 1; 
+        char *key_bencode = malloc(buf_size);
+        if (!key_bencode) {
+            fprintf(stderr, "Error: Malloc failed in bencoding\n");
+            exit(1);
+        }
+        snprintf(key_bencode, buf_size, "%ld:%s", key_len, key);
+        char *temp = bencode_helper(key, key_bencode, info, i, temp_len);
+
+        total_length += (*temp_len - 1); // update total length
+        result = realloc(result, total_length);
+        if (!result) {
+            fprintf(stderr, "Memory reallocation failed\n");
+            exit(1);
+        }
+
+        // combine strings. Add new encoded value to previous ones
+        memcpy(result + (total_length - (*temp_len) - 1), temp, *temp_len - 1);
+        result[total_length - 2] = 'e';
+        result[total_length - 1] = '\0';
+        free(temp);
+    }
+    *temp_len = total_length; // modify length to return
+    return result;
+}
+
+
+/* This function is meant to serve as an helper for bencode(). Things to note
+* - The corresponding value pair from bencode() is encoded here
+* - When value is "string type", a combination of snprintf and memcpy is used
+* - This is because for some key pairs like "pieces", whose values are raw binary stream of hashes, it can be quite cubersome using built in string functions
+* - The function takes the encoded key from bencode() and then concatenates it
+with the encoded value to produce a result.
+- result is then returned.
+*/
+char* bencode_helper(char*key, char*key_bencode, DictArr* info, int i, size_t*len)
+{
+    char *result = NULL;
+
+    // Keys that have integers as "values"
+    if(strcmp(key, "length") == 0 || strcmp(key, "piece length") == 0)
+    {
+        long int value = info->items[i]->value.num;
+        
+        // bencode value
+        int val_size = snprintf(NULL, 0, "i%lde", value) + 1;
+        char *value_bencode = malloc(val_size);
+        if (!value_bencode) {
+            fprintf(stderr, "Error: Malloc failed in bencoding\n");
+            free(key_bencode);
+            exit(1);
+        }
+
+        // successfully write int beconding
+        snprintf(value_bencode, val_size, "i%lde", value);
+
+        int total_size = strlen(key_bencode) + val_size;
+        // writing the concatenation to result
+        result = malloc(total_size);
+        if(!result){
+            fprintf(stderr, "Error: Malloc failed in bencoding\n");
+            free(key_bencode);
+            free(value_bencode);
+            exit(1);
+        }
+
+        // write to result
+        snprintf(result, total_size, "%s%s", key_bencode, value_bencode);
+
+        free(key_bencode);
+        free(value_bencode);
+
+        *len = total_size; // modify the length variable passed in
+    }
+
+    // Keys that have strings as "values"
+    else{
+        char* val = info->items[i]->value.str;
+        long int val_len = 0;
+        int val_size = 0;
+        char *value_bencode = NULL;
+        int total_size = 0;
+
+        // dealing with sha1 hashes where we have to be more careful
+        if (strcmp(key, "pieces") == 0){
+            val_len = _hashlen(info);
+            val_size = snprintf(NULL, 0, "%ld:", val_len);
+            val_size += val_len + 1;
+        }        
+
+        else{
+            val_len = strlen(val);
+            val_size = snprintf(NULL, 0, "%ld:%s", val_len, val) + 1;
+        }
+
+        // malloc space for entire bencoding value
+        value_bencode = malloc(val_size);
+        if (!value_bencode) {
+            fprintf(stderr, "Error: Malloc failed in bencoding\n");
+            free(key_bencode);
+            exit(1);
+        }
+        
+        // successfully write beconding for strings
+        snprintf(value_bencode, val_size - val_len, "%ld:", val_len);
+        memcpy(value_bencode + (val_size - val_len - 1), val, val_len);
+        total_size = strlen(key_bencode) + val_size;
+
+        // writing the concatenation to result
+        result = malloc(total_size);
+        if(!result){
+            fprintf(stderr, "Error: Malloc failed in bencoding\n");
+            free(key_bencode);
+            free(value_bencode);
+            exit(1);
+        }
+    
+        // writing concatenation to result
+        memcpy(result, key_bencode, strlen(key_bencode));
+        memcpy(result + strlen(key_bencode), value_bencode, val_size);
+
+        free(key_bencode);
+        free(value_bencode);
+
+        *len = total_size;// modify len variable
+    }
+
+    return result;
 }
