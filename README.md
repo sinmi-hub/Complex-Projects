@@ -13,3 +13,11 @@
   	- Tranmission is an open source BitTorrent Client that is used by Ubuntu and is the current default (As of May 2024)
 
 - Status: **In Progress**
+
+## HTTP Server
+
+- **Description**
+  
+ 	- The core of this project was entirely sourced from codecrafters to improve my skills and practice
+
+- Status: **Complete**
